@@ -65,12 +65,12 @@ fn rest(i: &[u8]) -> IResult<&[u8], &[u8]> {
 	IResult::Done(b"", i)
 }
 
-named!(root(&'a [u8]) -> Exception<Filter>, chain!(
+named!(root(&[u8]) -> Exception<Filter>, chain!(
 	exception: tag!("@@")? ~
 
 	matchers: matchers ~
-	options:  options? ~
-	selector: selector? ~
+	options:  complete!(options)? ~
+	selector: complete!(selector)? ~
 
 	eof,
 
@@ -89,7 +89,7 @@ named!(root(&'a [u8]) -> Exception<Filter>, chain!(
 		}
 	}));
 
-named!(matchers(&'a [u8]) -> Vec<Vec<Matcher>>, chain!(
+named!(matchers(&[u8]) -> Vec<Vec<Matcher>>, chain!(
 	first: many1!(matcher) ~
 	rest:  many0!(chain!(tag!(",") ~ m: many1!(matcher), || m)),
 
@@ -99,7 +99,7 @@ named!(matchers(&'a [u8]) -> Vec<Vec<Matcher>>, chain!(
 		result
 	}));
 
-named!(matcher(&'a [u8]) -> Matcher, alt!(
+named!(matcher(&[u8]) -> Matcher, alt!(
 	chain!(tag!("||") ~ d: domain, || { Matcher::Domain(d.iter().map(|&s| s.to_owned()).collect()) })
 	|
 	tag!("|") => { |_| Matcher::Anchor }
@@ -110,7 +110,7 @@ named!(matcher(&'a [u8]) -> Matcher, alt!(
 	|
 	verbatim => { |s| Matcher::Verbatim(String::from(s)) }));
 
-named!(domain(&'a [u8]) -> Vec<&'a str>, chain!(
+named!(domain(&[u8]) -> Vec<&str>, chain!(
 	first: map_res!(alphanumeric, |s| str::from_utf8(s)) ~
 	rest:  many0!(chain!(tag!(".") ~
 		part: map_res!(alphanumeric, |s| str::from_utf8(s)), || { part })),
@@ -121,11 +121,11 @@ named!(domain(&'a [u8]) -> Vec<&'a str>, chain!(
 		result
 	}));
 
-named!(verbatim(&'a [u8]) -> &'a str, map_res!(
+named!(verbatim(&[u8]) -> &str, map_res!(
 	alt!(take_until_either!("|^*$#") | rest),
 	str::from_utf8));
 
-named!(options(&'a [u8]) -> Vec<Exception<Option>>, chain!(tag!("$") ~
+named!(options(&[u8]) -> Vec<Exception<Option>>, chain!(tag!("$") ~
 	first: option ~
 	rest:  many0!(chain!(tag!(",") ~ o: option, || o)),
 
@@ -135,50 +135,50 @@ named!(options(&'a [u8]) -> Vec<Exception<Option>>, chain!(tag!("$") ~
 		result
 	}));
 
-named!(option(&'a [u8]) -> Exception<Option>, alt!(
-	tag!("script")  => { |_| Exception::No(Option::Script) } |
-	tag!("~script") => { |_| Exception::Yes(Option::Script) } |
+named!(option(&[u8]) -> Exception<Option>, alt!(
+	complete!(tag!("script"))  => { |_| Exception::No(Option::Script) } |
+	complete!(tag!("~script")) => { |_| Exception::Yes(Option::Script) } |
 
-	tag!("image") => { |_| Exception::No(Option::Image) } |
-	tag!("~image") => { |_| Exception::Yes(Option::Image) } |
+	complete!(tag!("image")) => { |_| Exception::No(Option::Image) } |
+	complete!(tag!("~image")) => { |_| Exception::Yes(Option::Image) } |
 
-	tag!("stylesheet") => { |_| Exception::No(Option::StyleSheet) } |
-	tag!("~stylesheet") => { |_| Exception::Yes(Option::StyleSheet) } |
+	complete!(tag!("stylesheet")) => { |_| Exception::No(Option::StyleSheet) } |
+	complete!(tag!("~stylesheet")) => { |_| Exception::Yes(Option::StyleSheet) } |
 
-	tag!("object-subrequest") => { |_| Exception::No(Option::ObjectSubRequest) } |
-	tag!("~object-subrequest") => { |_| Exception::Yes(Option::ObjectSubRequest) } |
+	complete!(tag!("object-subrequest")) => { |_| Exception::No(Option::ObjectSubRequest) } |
+	complete!(tag!("~object-subrequest")) => { |_| Exception::Yes(Option::ObjectSubRequest) } |
 
-	tag!("object") => { |_| Exception::No(Option::Object) } |
-	tag!("~object") => { |_| Exception::Yes(Option::Object) } |
+	complete!(tag!("object")) => { |_| Exception::No(Option::Object) } |
+	complete!(tag!("~object")) => { |_| Exception::Yes(Option::Object) } |
 
-	tag!("document") => { |_| Exception::No(Option::Document) } |
-	tag!("~document") => { |_| Exception::Yes(Option::Document) } |
+	complete!(tag!("document")) => { |_| Exception::No(Option::Document) } |
+	complete!(tag!("~document")) => { |_| Exception::Yes(Option::Document) } |
 
-	tag!("subdocument") => { |_| Exception::No(Option::SubDocument) } |
-	tag!("~subdocument") => { |_| Exception::Yes(Option::SubDocument) } |
+	complete!(tag!("subdocument")) => { |_| Exception::No(Option::SubDocument) } |
+	complete!(tag!("~subdocument")) => { |_| Exception::Yes(Option::SubDocument) } |
 
-	tag!("third-party") => { |_| Exception::No(Option::ThirdParty) } |
-	tag!("~third-party") => { |_| Exception::Yes(Option::ThirdParty) } |
+	complete!(tag!("third-party")) => { |_| Exception::No(Option::ThirdParty) } |
+	complete!(tag!("~third-party")) => { |_| Exception::Yes(Option::ThirdParty) } |
 
-	tag!("match-case") => { |_| Exception::No(Option::MatchCase) } |
-	tag!("~match-case") => { |_| Exception::Yes(Option::MatchCase) } |
+	complete!(tag!("match-case")) => { |_| Exception::No(Option::MatchCase) } |
+	complete!(tag!("~match-case")) => { |_| Exception::Yes(Option::MatchCase) } |
 
-	tag!("xmlhttprequest") => { |_| Exception::No(Option::XmlHttpRequst) } |
-	tag!("~xmlhttprequest") => { |_| Exception::Yes(Option::XmlHttpRequst) } |
+	complete!(tag!("xmlhttprequest")) => { |_| Exception::No(Option::XmlHttpRequst) } |
+	complete!(tag!("~xmlhttprequest")) => { |_| Exception::Yes(Option::XmlHttpRequst) } |
 
-	tag!("elemhide") => { |_| Exception::No(Option::ElemHide) } |
-	tag!("~elemhide") => { |_| Exception::Yes(Option::ElemHide) } |
+	complete!(tag!("elemhide")) => { |_| Exception::No(Option::ElemHide) } |
+	complete!(tag!("~elemhide")) => { |_| Exception::Yes(Option::ElemHide) } |
 
-	tag!("collapse") => { |_| Exception::No(Option::Collapse) } |
-	tag!("~collapse") => { |_| Exception::Yes(Option::Collapse) } |
+	complete!(tag!("collapse")) => { |_| Exception::No(Option::Collapse) } |
+	complete!(tag!("~collapse")) => { |_| Exception::Yes(Option::Collapse) } |
 
-	tag!("donottrack") => { |_| Exception::No(Option::DoNotTrack) } |
-	tag!("~donottrack") => { |_| Exception::Yes(Option::DoNotTrack) } |
+	complete!(tag!("donottrack")) => { |_| Exception::No(Option::DoNotTrack) } |
+	complete!(tag!("~donottrack")) => { |_| Exception::Yes(Option::DoNotTrack) } |
 
-	tag!("other") => { |_| Exception::No(Option::Other) } |
-	tag!("~other") => { |_| Exception::Yes(Option::Other) }));
+	complete!(tag!("other")) => { |_| Exception::No(Option::Other) } |
+	complete!(tag!("~other")) => { |_| Exception::Yes(Option::Other) }));
 
-named!(selector(&'a [u8]) -> Exception<&'a str>, map_res!(
+named!(selector(&[u8]) -> Exception<&str>, map_res!(
 	alt!(chain!(tag!("##") ~ s: rest, || { Exception::No(s) }) |
 	     chain!(tag!("#@#") ~ s: rest, || { Exception::Yes(s) })),
 
