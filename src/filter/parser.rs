@@ -1,85 +1,26 @@
-use nom::{IResult, alphanumeric, eof};
+use nom::{IResult, alphanumeric, eof, rest};
 use std::str;
 
-use std::option::Option as Opt;
+use filter::Exception::{self, Yes, No};
+use filter::{Matcher, Option, Filter};
 
-#[derive(PartialEq, Eq, Clone, Debug)]
-pub enum Exception<T> {
-	No(T),
-	Yes(T),
+pub fn parse<T: AsRef<[u8]> + ?Sized>(line: &T) -> IResult<&[u8], Exception<Filter>> {
+	root(line.as_ref())
 }
 
-impl<T> Exception<T> {
-	fn map<U, F: FnOnce(T) -> U>(self, f: F) -> Exception<U> {
-		match self {
-			Exception::No(v) => Exception::No(f(v)),
-			Exception::Yes(v) => Exception::Yes(f(v)),
-		}
-	}
-}
-
-#[derive(PartialEq, Eq, Clone, Debug)]
-pub struct Filter {
-	uri:      Vec<Vec<Matcher>>,
-	options:  Vec<Exception<Option>>,
-	selector: Opt<Exception<String>>,
-}
-
-#[derive(PartialEq, Eq, Clone, Debug)]
-pub enum Matcher {
-	Anchor,
-	Verbatim(String),
-	Regex(String),
-	Domain(Vec<String>),
-	Wildcard,
-	Separator,
-}
-
-#[derive(PartialEq, Eq, Clone, Debug)]
-pub enum Option {
-	Script,
-	Image,
-	StyleSheet,
-	Object,
-	ObjectSubRequest,
-	Document,
-	SubDocument,
-	ThirdParty,
-	Domain(Vec<Exception<String>>),
-	MatchCase,
-	XmlHttpRequst,
-	ElemHide,
-	SiteKey(Vec<String>),
-	Collapse,
-	DoNotTrack,
-	Other,
-}
-
-impl Filter {
-	pub fn parse<T: AsRef<[u8]> + ?Sized>(line: &T) -> IResult<&[u8], Exception<Filter>> {
-		root(line.as_ref())
-	}
-}
-
-fn rest(i: &[u8]) -> IResult<&[u8], &[u8]> {
-	IResult::Done(b"", i)
-}
-
-named!(root(&'a [u8]) -> Exception<Filter>, chain!(
+named!(root(&[u8]) -> Exception<Filter>, chain!(
 	exception: tag!("@@")? ~
 
 	matchers: matchers ~
-	options:  options? ~
-	selector: selector? ~
+	options:  complete!(options)? ~
+	selector: complete!(selector)? ~
 
 	eof,
 
 	|| {
-		let result = Filter {
-			uri:      matchers,
-			options:  options.unwrap_or(Vec::new()),
-			selector: selector.map(|e| e.map(|s| s.to_owned())),
-		};
+		let result = Filter::new(matchers,
+			options.unwrap_or(Vec::new()),
+			selector.map(|e| e.map(|s| s.to_owned())));
 
 		if exception.is_none() {
 			Exception::No(result)
@@ -89,17 +30,27 @@ named!(root(&'a [u8]) -> Exception<Filter>, chain!(
 		}
 	}));
 
-named!(matchers(&'a [u8]) -> Vec<Vec<Matcher>>, chain!(
-	first: many1!(matcher) ~
-	rest:  many0!(chain!(tag!(",") ~ m: many1!(matcher), || m)),
+named!(matchers(&[u8]) -> Vec<Exception<Vec<Matcher>>>, chain!(
+	    exception: tag!("~")? ~
+	    first:     many1!(matcher) ~
+	mut rest:      many0!(chain!(tag!(",") ~ m: matchers, || m)),
 
 	|| {
-		let mut result = vec![first];
-		result.extend(rest);
+		let mut result = if exception.is_some() {
+			vec![Yes(first)]
+		}
+		else {
+			vec![No(first)]
+		};
+
+		if let Some(mut value) = rest.pop() {
+			result.push(value.pop().unwrap());
+		}
+
 		result
 	}));
 
-named!(matcher(&'a [u8]) -> Matcher, alt!(
+named!(matcher(&[u8]) -> Matcher, alt!(
 	chain!(tag!("||") ~ d: domain, || { Matcher::Domain(d.iter().map(|&s| s.to_owned()).collect()) })
 	|
 	tag!("|") => { |_| Matcher::Anchor }
@@ -110,7 +61,7 @@ named!(matcher(&'a [u8]) -> Matcher, alt!(
 	|
 	verbatim => { |s| Matcher::Verbatim(String::from(s)) }));
 
-named!(domain(&'a [u8]) -> Vec<&'a str>, chain!(
+named!(domain(&[u8]) -> Vec<&str>, chain!(
 	first: map_res!(alphanumeric, |s| str::from_utf8(s)) ~
 	rest:  many0!(chain!(tag!(".") ~
 		part: map_res!(alphanumeric, |s| str::from_utf8(s)), || { part })),
@@ -121,11 +72,11 @@ named!(domain(&'a [u8]) -> Vec<&'a str>, chain!(
 		result
 	}));
 
-named!(verbatim(&'a [u8]) -> &'a str, map_res!(
+named!(verbatim(&[u8]) -> &str, map_res!(
 	alt!(take_until_either!("|^*$#") | rest),
 	str::from_utf8));
 
-named!(options(&'a [u8]) -> Vec<Exception<Option>>, chain!(tag!("$") ~
+named!(options(&[u8]) -> Vec<Exception<Option>>, chain!(tag!("$") ~
 	first: option ~
 	rest:  many0!(chain!(tag!(",") ~ o: option, || o)),
 
@@ -135,50 +86,50 @@ named!(options(&'a [u8]) -> Vec<Exception<Option>>, chain!(tag!("$") ~
 		result
 	}));
 
-named!(option(&'a [u8]) -> Exception<Option>, alt!(
-	tag!("script")  => { |_| Exception::No(Option::Script) } |
-	tag!("~script") => { |_| Exception::Yes(Option::Script) } |
+named!(option(&[u8]) -> Exception<Option>, alt!(
+	complete!(tag!("script"))  => { |_| Exception::No(Option::Script) } |
+	complete!(tag!("~script")) => { |_| Exception::Yes(Option::Script) } |
 
-	tag!("image") => { |_| Exception::No(Option::Image) } |
-	tag!("~image") => { |_| Exception::Yes(Option::Image) } |
+	complete!(tag!("image")) => { |_| Exception::No(Option::Image) } |
+	complete!(tag!("~image")) => { |_| Exception::Yes(Option::Image) } |
 
-	tag!("stylesheet") => { |_| Exception::No(Option::StyleSheet) } |
-	tag!("~stylesheet") => { |_| Exception::Yes(Option::StyleSheet) } |
+	complete!(tag!("stylesheet")) => { |_| Exception::No(Option::StyleSheet) } |
+	complete!(tag!("~stylesheet")) => { |_| Exception::Yes(Option::StyleSheet) } |
 
-	tag!("object-subrequest") => { |_| Exception::No(Option::ObjectSubRequest) } |
-	tag!("~object-subrequest") => { |_| Exception::Yes(Option::ObjectSubRequest) } |
+	complete!(tag!("object-subrequest")) => { |_| Exception::No(Option::ObjectSubRequest) } |
+	complete!(tag!("~object-subrequest")) => { |_| Exception::Yes(Option::ObjectSubRequest) } |
 
-	tag!("object") => { |_| Exception::No(Option::Object) } |
-	tag!("~object") => { |_| Exception::Yes(Option::Object) } |
+	complete!(tag!("object")) => { |_| Exception::No(Option::Object) } |
+	complete!(tag!("~object")) => { |_| Exception::Yes(Option::Object) } |
 
-	tag!("document") => { |_| Exception::No(Option::Document) } |
-	tag!("~document") => { |_| Exception::Yes(Option::Document) } |
+	complete!(tag!("document")) => { |_| Exception::No(Option::Document) } |
+	complete!(tag!("~document")) => { |_| Exception::Yes(Option::Document) } |
 
-	tag!("subdocument") => { |_| Exception::No(Option::SubDocument) } |
-	tag!("~subdocument") => { |_| Exception::Yes(Option::SubDocument) } |
+	complete!(tag!("subdocument")) => { |_| Exception::No(Option::SubDocument) } |
+	complete!(tag!("~subdocument")) => { |_| Exception::Yes(Option::SubDocument) } |
 
-	tag!("third-party") => { |_| Exception::No(Option::ThirdParty) } |
-	tag!("~third-party") => { |_| Exception::Yes(Option::ThirdParty) } |
+	complete!(tag!("third-party")) => { |_| Exception::No(Option::ThirdParty) } |
+	complete!(tag!("~third-party")) => { |_| Exception::Yes(Option::ThirdParty) } |
 
-	tag!("match-case") => { |_| Exception::No(Option::MatchCase) } |
-	tag!("~match-case") => { |_| Exception::Yes(Option::MatchCase) } |
+	complete!(tag!("match-case")) => { |_| Exception::No(Option::MatchCase) } |
+	complete!(tag!("~match-case")) => { |_| Exception::Yes(Option::MatchCase) } |
 
-	tag!("xmlhttprequest") => { |_| Exception::No(Option::XmlHttpRequst) } |
-	tag!("~xmlhttprequest") => { |_| Exception::Yes(Option::XmlHttpRequst) } |
+	complete!(tag!("xmlhttprequest")) => { |_| Exception::No(Option::XmlHttpRequst) } |
+	complete!(tag!("~xmlhttprequest")) => { |_| Exception::Yes(Option::XmlHttpRequst) } |
 
-	tag!("elemhide") => { |_| Exception::No(Option::ElemHide) } |
-	tag!("~elemhide") => { |_| Exception::Yes(Option::ElemHide) } |
+	complete!(tag!("elemhide")) => { |_| Exception::No(Option::ElemHide) } |
+	complete!(tag!("~elemhide")) => { |_| Exception::Yes(Option::ElemHide) } |
 
-	tag!("collapse") => { |_| Exception::No(Option::Collapse) } |
-	tag!("~collapse") => { |_| Exception::Yes(Option::Collapse) } |
+	complete!(tag!("collapse")) => { |_| Exception::No(Option::Collapse) } |
+	complete!(tag!("~collapse")) => { |_| Exception::Yes(Option::Collapse) } |
 
-	tag!("donottrack") => { |_| Exception::No(Option::DoNotTrack) } |
-	tag!("~donottrack") => { |_| Exception::Yes(Option::DoNotTrack) } |
+	complete!(tag!("donottrack")) => { |_| Exception::No(Option::DoNotTrack) } |
+	complete!(tag!("~donottrack")) => { |_| Exception::Yes(Option::DoNotTrack) } |
 
-	tag!("other") => { |_| Exception::No(Option::Other) } |
-	tag!("~other") => { |_| Exception::Yes(Option::Other) }));
+	complete!(tag!("other")) => { |_| Exception::No(Option::Other) } |
+	complete!(tag!("~other")) => { |_| Exception::Yes(Option::Other) }));
 
-named!(selector(&'a [u8]) -> Exception<&'a str>, map_res!(
+named!(selector(&[u8]) -> Exception<&str>, map_res!(
 	alt!(chain!(tag!("##") ~ s: rest, || { Exception::No(s) }) |
 	     chain!(tag!("#@#") ~ s: rest, || { Exception::Yes(s) })),
 
@@ -197,20 +148,20 @@ mod tests {
 	fn full() {
 		println!("{:?}", super::root(b"google.com"));
 
-		assert_eq!(super::root(b"google.com$script"), Done(&b""[..], No(Filter {
-			uri:      vec![vec![Matcher::Verbatim("google.com".to_owned())]],
-			options:  vec![No(Option::Script)],
-			selector: None })));
+		assert_eq!(super::root(b"google.com$script"), Done(&b""[..], No(Filter::new(
+			vec![vec![Matcher::Verbatim("google.com".to_owned())]],
+			vec![No(Option::Script)],
+			None))));
 
-		assert_eq!(super::root(b"google.com##.hue"), Done(&b""[..], No(Filter {
-			uri:      vec![vec![Matcher::Verbatim("google.com".to_owned())]],
-			options:  vec![],
-			selector: Some(No(".hue".to_owned())) })));
+		assert_eq!(super::root(b"google.com##.hue"), Done(&b""[..], No(Filter::new(
+			vec![vec![Matcher::Verbatim("google.com".to_owned())]],
+			vec![],
+			Some(No(".hue".to_owned()))))));
 
-		assert_eq!(super::root(b"google.com$script##.hue"), Done(&b""[..], No(Filter {
-			uri:      vec![vec![Matcher::Verbatim("google.com".to_owned())]],
-			options:  vec![No(Option::Script)],
-			selector: Some(No(".hue".to_owned())) })));
+		assert_eq!(super::root(b"google.com$script##.hue"), Done(&b""[..], No(Filter::new(
+			vec![vec![Matcher::Verbatim("google.com".to_owned())]],
+			vec![No(Option::Script)],
+			Some(No(".hue".to_owned()))))));
 	}
 
 	#[test]

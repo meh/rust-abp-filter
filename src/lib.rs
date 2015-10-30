@@ -1,6 +1,9 @@
 #[macro_use]
 extern crate nom;
 
+#[cfg(feature = "url")]
+extern crate url;
+
 use std::io::Read;
 use std::fs::File;
 use std::path::Path;

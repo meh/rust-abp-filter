@@ -24,7 +24,7 @@ impl<R: Read> Reader<R> {
 				continue;
 			}
 
-			match Filter::parse(&line) {
+			match filter::parse(&line) {
 				IResult::Done(_, filter) =>
 					return Ok(filter),
 
