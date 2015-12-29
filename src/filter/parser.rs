@@ -51,7 +51,7 @@ named!(matchers(&[u8]) -> Vec<Exception<Vec<Matcher>>>, chain!(
 	}));
 
 named!(matcher(&[u8]) -> Matcher, alt!(
-	chain!(tag!("||") ~ d: domain, || { Matcher::Domain(d.iter().map(|&s| s.to_owned()).collect()) })
+	chain!(complete!(tag!("||")) ~ d: domain, || { Matcher::Domain(d.iter().map(|&s| s.to_owned()).collect()) })
 	|
 	tag!("|") => { |_| Matcher::Anchor }
 	|
@@ -141,25 +141,23 @@ named!(selector(&[u8]) -> Exception<&str>, map_res!(
 #[cfg(test)]
 mod tests {
 	use nom::IResult::Done;
-	use super::Exception::{No, Yes};
-	use super::{Option, Matcher, Filter};
+	use super::super::Exception::{No, Yes};
+	use super::super::{Option, Matcher, Filter};
 
 	#[test]
 	fn full() {
-		println!("{:?}", super::root(b"google.com"));
-
 		assert_eq!(super::root(b"google.com$script"), Done(&b""[..], No(Filter::new(
-			vec![vec![Matcher::Verbatim("google.com".to_owned())]],
+			vec![No(vec![Matcher::Verbatim("google.com".to_owned())])],
 			vec![No(Option::Script)],
 			None))));
 
 		assert_eq!(super::root(b"google.com##.hue"), Done(&b""[..], No(Filter::new(
-			vec![vec![Matcher::Verbatim("google.com".to_owned())]],
+			vec![No(vec![Matcher::Verbatim("google.com".to_owned())])],
 			vec![],
 			Some(No(".hue".to_owned()))))));
 
 		assert_eq!(super::root(b"google.com$script##.hue"), Done(&b""[..], No(Filter::new(
-			vec![vec![Matcher::Verbatim("google.com".to_owned())]],
+			vec![No(vec![Matcher::Verbatim("google.com".to_owned())])],
 			vec![No(Option::Script)],
 			Some(No(".hue".to_owned()))))));
 	}
